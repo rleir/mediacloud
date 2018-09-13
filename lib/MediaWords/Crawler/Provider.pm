@@ -340,7 +340,7 @@ sub provide_downloads
     my $num_skips = 0;
 
   MEDIA_ID:
-    for my $media_id ( @{ $self->{ downloads }->_get_download_media_ids } )
+    for my $media_id ( @{ $self->{ downloads }->_get_download_media_ids() } )
     {
 
         # we just slept for 1 so only bother calling time() if throttle is greater than 1
