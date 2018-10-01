@@ -3,7 +3,7 @@ jobs:
   build:
 
     docker:
-      - image: buildpack-deps:xenial
+      - image: pypt/mediacloud-circleci:latest
         environment:
           # Don't complain about open files limit in RabbitMQ startup wrapper
           MC_SKIP_RABBIT_OPEN_FILES_LIMIT_CHECK: 1
