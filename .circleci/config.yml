@@ -25,7 +25,7 @@ jobs:
       - run:
           name: Install container basics
           command: |
-            apt-get -y install git ca-certificates sudo
+            apt-get -y install git ca-certificates sudo apt-transport-https apt-utils acl file
 
       # Check out repository
       - checkout
