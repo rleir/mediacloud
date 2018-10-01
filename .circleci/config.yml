@@ -1,0 +1,100 @@
+version: 2
+jobs:
+  build:
+
+    docker:
+      - image: ubuntu:16.04
+        environment:
+          # Don't complain about open files limit in RabbitMQ startup wrapper
+          MC_SKIP_RABBIT_OPEN_FILES_LIMIT_CHECK: 1
+          # Report test suite coverage in run_test_suite.sh
+          MC_TEST_SUITE_REPORT_COVERAGE: 1
+
+    # Chunks of tests
+    parallelism: 4
+
+    steps:
+
+      # Restore .git
+      - restore_cache:
+          keys:
+            - v00001-source-{{ .Branch }}-{{ .Revision }}
+            - v00001-source-{{ .Branch }}-
+            - v00001-source-
+
+      # Check out repository
+      - checkout
+
+      # Cache .git for faster checkouts
+      - save_cache:
+          key: v00001-source-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - ".git"
+
+      # Restore cached dependencies
+      - restore_cache:
+          key: v00001-perl-dependencies-{{ checksum "ansible/roles/perl-dependencies/vars/main.yml" }}
+      - restore_cache:
+          key: v00001-python-dependencies-{{ checksum "ansible/roles/python-dependencies/files/requirements.txt" }}
+
+      - run:
+          name: Install Ansible
+          command: |
+            sudo -H pip install ansible ansible-lint
+
+      - run:
+          name: Provision with Ansible
+          command: |
+            cd ansible/
+            ansible-playbook --inventory='localhost,' --connection=local --skip-tags='hostname' setup.yml
+            cd ../
+
+      - run:
+          name: Install Coveralls Perl utilities to be able to report test coverage
+          command: |
+            ./script/run_in_env.sh cpanm --notest Devel::Cover Devel::Cover::Report::Coveralls
+
+      - run:
+          name: Install Coveralls Python utilities to be able to report test coverage
+          command: |
+            ./script/run_in_env.sh pip install --upgrade coveralls
+
+      # Cache installed dependencies right after provisioning
+      - save_cache:
+          key: v00001-perl-dependencies-{{ checksum "ansible/roles/perl-dependencies/vars/main.yml" }}
+          paths:
+            - "~/.perlbrew/"
+      - save_cache:
+          key: v00001-python-dependencies-{{ checksum "ansible/roles/python-dependencies/files/requirements.txt" }}
+          paths:
+            - "~/.virtualenvs/"
+
+      - run:
+          name: Create PostgreSQL databases on container
+          command: |
+            ./tools/db/create_default_db_user_and_databases.sh
+
+      - run:
+          name: Initialize PostgreSQL databases with schema on container
+          command: |
+            ./script/run_in_env.sh ./script/create_db.pl
+
+      - run:
+          name: Run test suite
+          command: |
+            ./script/run_test_suite.sh
+
+      - run:
+          name: Generate Coveralls-compatible JSON report for Python code (./coverage.json)
+          command: |
+            ./script/run_in_env.sh coveralls --output=coverage.json
+
+      - run:
+          name: Generate Coveralls-compatible JSON report for Perl code (./cover_db/coveralls.json)
+          command: |
+            ./script/run_in_env.sh cover -report CoverallsJSON
+
+      - run:
+          name: Merge Perl and Python reports, submit everything to Coveralls.io
+          command: |
+            ./script/run_in_env.sh coveralls --merge=cover_db/coveralls.json

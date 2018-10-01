@@ -70,31 +70,27 @@ echo "Running Python unit tests..."
 
 ALL_TEST_FILES=`find lib script t -name '*.t' | sort`
 
-if [ -z ${MC_TEST_CHUNK+x} ]; then
+if [ -z ${CIRCLE_NODE_INDEX+x} ]; then
     echo "Running all Perl unit tests..."
     TEST_FILES="$ALL_TEST_FILES"
 
 else
 
-    if [ "$MC_TEST_CHUNK" -gt 4 ]; then
-        echo "Only up to 4 chunks are supported."
-        exit 1
-    fi
-
-    echo "Running chunk $MC_TEST_CHUNK of Perl unit tests..."
+    echo "Running chunk ${CIRCLE_NODE_INDEX+1}/${CIRCLE_NODE_TOTAL} of Perl unit tests..."
 
     function join_by { local IFS="$1"; shift; echo "$*"; }
     
-    current_chunk=1
+    current_chunk=0
     TEST_FILES=()
     while read test_file; do
-        if [ "$current_chunk" -eq "$MC_TEST_CHUNK" ]; then
+
+        if [ $current_chunk -eq $CIRCLE_NODE_INDEX ]; then
             TEST_FILES+=($test_file)
         fi
 
         current_chunk=$((current_chunk+1))
-        if [ "$current_chunk" -gt 4 ]; then
-            current_chunk=1
+        if [ $current_chunk -ge $CIRCLE_NODE_TOTAL ]; then
+            current_chunk=0
         fi
 
     done < <(echo "$ALL_TEST_FILES")
