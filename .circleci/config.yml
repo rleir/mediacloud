@@ -3,7 +3,7 @@ jobs:
   build:
 
     docker:
-      - image: ubuntu:16.04
+      - image: buildpack-deps:xenial
         environment:
           # Don't complain about open files limit in RabbitMQ startup wrapper
           MC_SKIP_RABBIT_OPEN_FILES_LIMIT_CHECK: 1
@@ -23,9 +23,9 @@ jobs:
             - v00001-source-
 
       - run:
-          name: Install Git
+          name: Install container basics
           command: |
-            sudo apt-get -y install git
+            apt-get -y install git ca-certificates sudo
 
       # Check out repository
       - checkout
