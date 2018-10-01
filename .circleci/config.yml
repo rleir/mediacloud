@@ -22,6 +22,11 @@ jobs:
             - v00001-source-{{ .Branch }}-
             - v00001-source-
 
+      - run:
+          name: Install Git
+          command: |
+            sudo apt-get -y install git
+
       # Check out repository
       - checkout
 
