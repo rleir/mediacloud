@@ -29,6 +29,10 @@ jobs:
 
       # Check out repository
       - checkout
+      - run:
+          name: Pull Git submodules
+          command: |
+            git submodule update --init --recursive
 
       # Cache .git for faster checkouts
       - save_cache:
