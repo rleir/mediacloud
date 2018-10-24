@@ -26,7 +26,7 @@ use Test::Deep;
 
 require Test::NoWarnings;
 
-use MediaWords::Crawler::Engine;
+use MediaWords::Crawler::Download;
 use MediaWords::DBI::DownloadTexts;
 use MediaWords::DBI::Stories;
 use MediaWords::Test::Data;
@@ -163,6 +163,14 @@ sub get_crawler_data_directory
     return MediaWords::Util::Paths::mc_root_path() . "/t/data/crawler/";
 }
 
+sub __fetch_and_handle_single_download
+{
+    my ( $db, $download ) = @_;
+
+    my $handler = MediaWords::Crawler::Download::handler_for_download( $db, $download );
+    MediaWords::Crawler::Download::fetch_and_handle_download( $download, $handler );
+}
+
 sub main
 {
 
@@ -192,16 +200,13 @@ sub main
 
             my $download = MediaWords::Test::DB::Create::create_download_for_feed( $db, $feed );
 
-            my $crawler = MediaWords::Crawler::Engine->new();
-            $crawler->fetcher_number( 1 );
-
             INFO "starting fetch_and_handle_single_download";
 
-            $crawler->fetch_and_handle_single_download( $download );
+            __fetch_and_handle_single_download( $download );
 
             my $redundant_feed_download = MediaWords::Test::DB::Create::create_download_for_feed( $db, $feed );
 
-            $crawler->fetch_and_handle_single_download( $redundant_feed_download );
+            __fetch_and_handle_single_download( $redundant_feed_download );
 
             if ( defined( $dump ) && ( $dump eq '-d' ) )
             {

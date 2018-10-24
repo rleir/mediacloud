@@ -11,7 +11,7 @@ use English '-no_match_vars';
 use MediaWords::Test::HashServer;
 use Test::More tests => 6;
 
-use MediaWords::Crawler::Engine;
+use MediaWords::Crawler::Download;
 use MediaWords::Test::DB;
 use MediaWords::Util::Config;
 
@@ -32,7 +32,7 @@ sub fetch_response
 
     $download = $db->create( 'downloads', $download );
 
-    my $handler = MediaWords::Crawler::Engine::handler_for_download( $db, $download );
+    my $handler = MediaWords::Crawler::Download::handler_for_download( $db, $download );
     return $handler->fetch_download( $db, $download );
 }
 

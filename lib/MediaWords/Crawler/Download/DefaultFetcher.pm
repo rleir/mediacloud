@@ -11,7 +11,7 @@ use Modern::Perl "2015";
 use MediaWords::CommonLibs;
 
 use Moose::Role;
-with 'MediaWords::Crawler::FetcherRole';
+with 'MediaWords::Crawler::Download::FetcherRole';
 
 use MediaWords::DB;
 use MediaWords::Util::Config;

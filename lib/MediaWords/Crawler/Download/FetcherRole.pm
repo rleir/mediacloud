@@ -1,4 +1,4 @@
-package MediaWords::Crawler::FetcherRole;
+package MediaWords::Crawler::Download::FetcherRole;
 
 #
 # Moose role that download fetchers should implement

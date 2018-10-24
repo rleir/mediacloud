@@ -18,9 +18,9 @@ use Test::Deep;
 
 use MediaWords::DB;
 use MediaWords::Test::DB;
-use MediaWords::Crawler::Engine;
+use MediaWords::Crawler::Download;
 use MediaWords::Util::ParseJSON;
-use MediaWords::Test::HashServer;
+use MediaWords::Test::HTTP::HashServer;
 
 sub test_api_request_signature()
 {
@@ -120,7 +120,7 @@ sub test_fetch_handle_download($$)
 
     my $download = MediaWords::Test::DB::Create::create_download_for_feed( $db, $feed );
 
-    my $handler = MediaWords::Crawler::Engine::handler_for_download( $db, $download );
+    my $handler = MediaWords::Crawler::Download::handler_for_download( $db, $download );
 
     my $response = $handler->fetch_download( $db, $download );
     $handler->handle_response( $db, $download, $response );

@@ -16,7 +16,7 @@ use Modern::Perl "2015";
 use MediaWords::CommonLibs;
 
 use MediaWords::DB;
-use MediaWords::Crawler::Engine;
+use MediaWords::Crawler::Download;
 
 use Data::Dumper;
 use FindBin;
@@ -89,7 +89,7 @@ sub main
 
         $download = $db->create( 'downloads', $download );
 
-        my $handler = MediaWords::Crawler::Engine::handler_for_download( $db, $download );
+        my $handler = MediaWords::Crawler::Download::handler_for_download( $db, $download );
         $handler->handle_download( $db, $download, $raw_download_content );
     }
 

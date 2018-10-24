@@ -1,11 +1,12 @@
-package MediaWords::Crawler::Downloads_Queue;
-use Modern::Perl "2015";
-use MediaWords::CommonLibs;
+package MediaWords::Crawler::Provider::Queue;
 
-# provide one request at a time a crawler process
+# Provide one request at a time a crawler process
 
 use strict;
 use warnings;
+
+use Modern::Perl "2015";
+use MediaWords::CommonLibs;
 
 use Fcntl qw (O_RDWR O_CREAT O_TRUNC);
 use File::Path;
@@ -30,7 +31,7 @@ sub new
     return $self;
 }
 
-sub _queue_download
+sub queue_download
 {
     my ( $self, $download ) = @_;
 
@@ -66,7 +67,7 @@ sub _queue_download
 }
 
 # pop the latest download for the given media_id off the queue
-sub _pop_download
+sub pop_download
 {
     my ( $self, $media_id ) = @_;
     $self->{ downloads }->{ $media_id }->{ time } = time;
@@ -92,7 +93,7 @@ sub _pop_download
 }
 
 # get list of download media_id times in the form of { media_id => $media_id, time => $time }
-sub _get_download_media_ids
+sub get_download_media_ids
 {
     my ( $self ) = @_;
 
@@ -121,7 +122,7 @@ sub _verify_downloads_count
 }
 
 # get total number of queued downloads
-sub _get_downloads_size
+sub get_downloads_size
 {
     my ( $self ) = @_;
 

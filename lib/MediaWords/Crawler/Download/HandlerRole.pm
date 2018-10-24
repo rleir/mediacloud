@@ -1,4 +1,4 @@
-package MediaWords::Crawler::HandlerRole;
+package MediaWords::Crawler::Download::HandlerRole;
 
 #
 # Moose role that download handlers should implement

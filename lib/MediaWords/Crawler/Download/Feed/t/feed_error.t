@@ -11,7 +11,7 @@ use Test::More tests => 2;
 use MediaWords::Test::HashServer;
 use Readonly;
 
-use MediaWords::Crawler::Engine;
+use MediaWords::Crawler::Download;
 use MediaWords::Test::DB;
 
 Readonly my $HTTP_PORT => 8912;
@@ -41,7 +41,7 @@ sub _fetch_and_handle_response
         $download = $db->find_by_id( 'downloads', $downloads_id );
     }
 
-    my $handler = MediaWords::Crawler::Engine::handler_for_download( $db, $download );
+    my $handler = MediaWords::Crawler::Download::handler_for_download( $db, $download );
 
     my $response = $handler->fetch_download( $db, $download );
     $handler->handle_response( $db, $download, $response );

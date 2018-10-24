@@ -13,7 +13,7 @@ use Encode;
 use HTML::Entities;
 use Readonly;
 
-use MediaWords::Crawler::Engine;
+use MediaWords::Crawler::Download;
 use MediaWords::DBI::Downloads;
 
 # CONSTANTS
@@ -146,7 +146,7 @@ sub redownload : Local
 
     my $download = $db->find_by_id( 'downloads', $downloads_id );
 
-    my $handler = MediaWords::Crawler::Engine::handler_for_download( $db, $download );
+    my $handler = MediaWords::Crawler::Download::handler_for_download( $db, $download );
 
     my $response = $handler->fetch_download( $db, $download );
     $handler->handle_response( $db, $download, $response );
