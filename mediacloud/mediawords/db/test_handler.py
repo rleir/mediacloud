@@ -439,6 +439,38 @@ class TestDatabaseHandler(TestDatabaseTestCase):
         primary_key = self.db().primary_key_column('test.table_with_primary_key')
         assert primary_key == 'primary_key_column'
 
+        # Partitioned base table
+        self.db().query("""
+            CREATE TABLE IF NOT EXISTS partitioned_table (
+                partitioned_table_id    BIGSERIAL       NOT NULL,
+                test                    TEXT            NOT NULL,
+                PRIMARY KEY (partitioned_table_id)
+            ) PARTITION BY RANGE (partitioned_table_id)
+        """)
+        primary_key = self.db().primary_key_column('partitioned_table')
+        assert primary_key == 'partitioned_table_id'
+
+        # Partitioned child table
+        self.db().query("""
+            CREATE TABLE IF NOT EXISTS partitioned_table_c1
+                PARTITION OF partitioned_table
+                FOR VALUES FROM (1) TO (10)
+        """)
+        primary_key = self.db().primary_key_column('partitioned_table_c1')
+        assert primary_key == 'partitioned_table_id'
+
+        # Composite primary key
+        self.db().query("""
+            CREATE TABLE IF NOT EXISTS table_with_composite_pk (
+                table_with_composite_pk_id  BIGSERIAL   NOT NULL,
+                name                        TEXT        NOT NULL,
+                surname                     TEXT        NOT NULL,
+                PRIMARY KEY (table_with_composite_pk_id, surname)
+            )
+        """)
+        primary_key = self.db().primary_key_column('table_with_composite_pk')
+        assert primary_key == 'table_with_composite_pk_id'
+
         # Nonexistent table
         with pytest.raises(McPrimaryKeyColumnException):
             self.db().primary_key_column('nonexistent_table')
@@ -917,36 +949,3 @@ class TestDatabaseHandler(TestDatabaseTestCase):
                 ]
             }
         ]
-
-    def test_query_paged_hashes(self):
-
-        sql = """SELECT * FROM generate_series(1, 15) AS number"""
-        rows_per_page = 10
-
-        # First page
-        qph = self.db().query_paged_hashes(query=sql, page=1, rows_per_page=rows_per_page)
-        hashes = qph.list()
-        pager = qph.pager()
-
-        assert len(hashes) == 10
-        assert hashes[0]['number'] == 1
-        assert hashes[9]['number'] == 10
-
-        assert pager.previous_page() is None
-        assert pager.next_page() == 2
-        assert pager.first() == 1
-        assert pager.last() == 10
-
-        # Last page
-        qph = self.db().query_paged_hashes(query=sql, page=2, rows_per_page=rows_per_page)
-        hashes = qph.list()
-        pager = qph.pager()
-
-        assert len(hashes) == 5
-        assert hashes[0]['number'] == 11
-        assert hashes[4]['number'] == 15
-
-        assert pager.previous_page() == 1
-        assert pager.next_page() is None
-        assert pager.first() == 11
-        assert pager.last() == 15

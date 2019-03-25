@@ -8,7 +8,6 @@ use base 'Catalyst::Controller';
 use List::Util qw(first max maxstr min minstr reduce shuffle sum);
 use Moose;
 use namespace::autoclean;
-use List::Compare;
 use HTTP::Status qw(:constants);
 use Readonly;
 use Encode;
@@ -106,7 +105,7 @@ sub cliff : Local
     my $json_list = {};
     for my $stories_id ( @{ $stories_ids } )
     {
-        $stories_id = $stories_id + 0;
+        $stories_id = int( $stories_id );
 
         next if ( $json_list->{ $stories_id } );
 
@@ -167,7 +166,7 @@ sub nytlabels : Local
     my $json_list = {};
     for my $stories_id ( @{ $stories_ids } )
     {
-        $stories_id = $stories_id + 0;
+        $stories_id = int( $stories_id );
 
         next if ( $json_list->{ $stories_id } );
 

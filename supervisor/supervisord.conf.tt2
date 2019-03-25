@@ -18,6 +18,9 @@
     [%- END %]
 command = [% command %]
 directory = %(here)s/../
+[%- IF environment %]
+environment=[% environment %]
+[%- END %]
 autorestart = [% supervisor.programs.$program.autorestart_b|| default_autorestart  %]
 [% IF supervisor.start_no_supervisor_programs == 1  %]
 autostart = [% supervisor.programs.$program.autostart_b || 'false'  %]
@@ -247,8 +250,8 @@ programs = rabbitmq
 %]
 
 [% INCLUDE program_config
-    program='similarweb_update_audience_data'
-    command="./script/run_in_env.sh ./mediacloud/mediawords/job/similarweb/update_audience_data.py"
+    program='word2vec_generate_snapshot_model'
+    command="./script/run_in_env.sh ./mediacloud/mediawords/job/word2vec/generate_snapshot_model.py"
     default_stopasgroup='false'
     default_killasgroup='false'
     default_autorestart='false'
@@ -257,8 +260,8 @@ programs = rabbitmq
 %]
 
 [% INCLUDE program_config
-    program='word2vec_generate_snapshot_model'
-    command="./script/run_in_env.sh ./mediacloud/mediawords/job/word2vec/generate_snapshot_model.py"
+    program='sitemap_fetch_media_pages'
+    command="./script/run_in_env.sh ./mediacloud/mediawords/job/sitemap/fetch_media_pages.py"
     default_stopasgroup='false'
     default_killasgroup='false'
     default_autorestart='false'
@@ -289,6 +292,16 @@ programs = rabbitmq
 [% INCLUDE program_config
     program='fetch_link'
     command="./script/run_in_env.sh ./mediacloud/mediawords/job/tm/fetch_link_job.py"
+    default_stopasgroup='false'
+    default_killasgroup='false'
+    default_autorestart='false'
+    default_autostart='true'
+    default_nice=10
+%]
+
+[% INCLUDE program_config
+    program='fetch_twitter_urls'
+    command="./script/run_in_env.sh ./mediacloud/mediawords/job/tm/fetch_twitter_urls_job.py"
     default_stopasgroup='false'
     default_killasgroup='false'
     default_autorestart='false'

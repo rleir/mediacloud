@@ -114,7 +114,10 @@ def get_extracted_html(db: DatabaseHandler, story: dict) -> str:
 
     """
     download = db.query(
-        "select * from downloads where stories_id = %(a)s order by downloads_id limit 1",
+        """
+        with d as ( select * from downloads where stories_id = %(a)s ) -- goofy cte to avoid bad query plan
+            select * from d order by downloads_id limit 1
+        """,
         {'a': story['stories_id']}).hash()
 
     extractor_results = mediawords.dbi.downloads.extract(db, download, PyExtractorArguments(use_cache=True))
@@ -123,9 +126,20 @@ def get_extracted_html(db: DatabaseHandler, story: dict) -> str:
 
 def get_links_from_story_text(db: DatabaseHandler, story: dict) -> typing.List[str]:
     """Get all urls that appear in the text or description of the story using a simple regex."""
-    download_texts = db.query(
-        "select dt.* from downloads d join download_texts dt using ( downloads_id ) where stories_id = %(a)s",
-        {'a': story['stories_id']}).hashes()
+    download_ids = db.query("""
+        SELECT downloads_id
+        FROM downloads
+        WHERE stories_id = %(stories_id)s
+        """, {'stories_id': story['stories_id']}
+    ).flat()
+
+    download_texts = db.query("""
+        SELECT *
+        FROM download_texts
+        WHERE downloads_id = ANY(%(download_ids)s)
+        ORDER BY download_texts_id
+        """, {'download_ids': download_ids}
+    ).hashes()
 
     story_text = ' '.join([dt['download_text'] for dt in download_texts])
 
@@ -199,6 +213,10 @@ def extract_links_for_topic_story(db: DatabaseHandler, story: dict, topic: dict)
         links = get_links_from_story(db, story)
 
         for link in links:
+            if mediawords.tm.domains.skip_self_linked_domain_url(db, topic['topics_id'], story['url'], link):
+                log.info("skipping self linked domain url...")
+                continue
+
             topic_link = {
                 'topics_id': topic['topics_id'],
                 'stories_id': story['stories_id'],

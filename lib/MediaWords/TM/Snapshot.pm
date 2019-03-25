@@ -47,7 +47,6 @@ use Encode;
 use File::Temp;
 use FileHandle;
 use Getopt::Long;
-use GraphViz2;
 use List::Util;
 use XML::Simple;
 use Readonly;
@@ -55,6 +54,7 @@ use Readonly;
 use MediaWords::DBI::Media;
 use MediaWords::Job::TM::SnapshotTopic;
 use MediaWords::Solr;
+use MediaWords::TM;
 use MediaWords::TM::Model;
 use MediaWords::TM::Snapshot::GraphLayout;
 use MediaWords::Util::CSV;
@@ -116,6 +116,24 @@ my $_drop_snapshot_period_stories = 1;
 
 =cut
 
+# update the job state args, catching any error caused by not running within a job
+sub update_job_state_args($$)
+{
+    my ( $db, $args ) = @_;
+
+    eval { MediaWords::Job::TM::SnapshotTopic->update_job_state_args( $db, $args ) };
+    die( $@ ) if ( $@ && ( $@ !~ /AbstractJob::run_statefully/ ) );
+}
+
+# update the job state message, catching any error caused by not running within a job
+sub update_job_state_message($$)
+{
+    my ( $db, $message ) = @_;
+
+    eval { MediaWords::Job::TM::SnapshotTopic->update_job_state_message( $db, $message ) };
+    die( $@ ) if ( $@ && ( $@ !~ /AbstractJob::run_statefully/ ) );
+}
+
 # get the list of all snapshot tables
 sub get_snapshot_tables
 {
@@ -141,7 +159,7 @@ sub set_temporary_table_tablespace
 
 # create temporary view of all the snapshot_* tables that call into the snap.* tables.
 # this is useful for writing queries on the snap.* tables without lots of ugly
-# joins and clauses to cd and timespan.  It also provides the same set of snapshot_*
+# joins and clauses to snap and timespan.  It also provides the same set of snapshot_*
 # tables as provided by write_story_link_counts_snapshot_tables, so that the same
 # set of queries can run against either.
 sub create_temporary_snapshot_views
@@ -171,12 +189,13 @@ END
 
 =head2 setup_temporary_snapshot_tables( $db, $timespan, $topic, $live )
 
-Setup snapshot_* tables by either creating views for the relevant snap.* tables for a snapshot snapshot or by copying live data
-if $live is true.
+Setup snapshot_* tables by creating views for the relevant snap.* tables.
 
 The following snapshot_tables are created that contain a copy of all relevant rows present in the topic at the time
 the snapshot was created: snapshot_topic_stories, snapshot_stories, snapshot_media, snapshot_topic_links_cross_media,
-snapshot_stories_tags_map, snapshot_stories_tags_map, snapshot_tag_sets, snapshot_media_with_types.  The data in each of these tables
+snapshot_stories_tags_map, snapshot_stories_tags_map, snapshot_tag_sets, snapshot_media_with_types.  
+
+The data in each of these tables
 consists of data related to all of the stories in the entire topic, not restricted to a specific timespan.  So
 snapshot_media includes all media including any story in the topic, regardless of date.  Each of these tables consists
 of the fields present in the snapshoted table.
@@ -278,6 +297,8 @@ sub restrict_period_stories_to_focus
     }
 
     $matching_stories_ids = [ map { int( $_ ) } @{ $matching_stories_ids } ];
+
+    DEBUG( "restricting timespan to focus query: " . scalar( @{ $matching_stories_ids } ) . " stories" );
 
     my $ids_table = $db->get_temporary_ids_table( $matching_stories_ids );
 
@@ -524,7 +545,7 @@ sub get_stories_csv
     my ( $db, $timespan ) = @_;
 
     my $csv = MediaWords::Util::CSV::get_query_as_csv( $db, <<END );
-select distinct s.stories_id, s.title, s.url,
+select s.stories_id, s.title, s.url,
         case when ( stm.tags_id is null ) then s.publish_date::text else 'undateable' end as publish_date,
         m.name media_name, m.url media_url, m.media_id,
         slc.media_inlink_count, slc.inlink_count, slc.outlink_count, slc.facebook_share_count,
@@ -533,7 +554,7 @@ select distinct s.stories_id, s.title, s.url,
 	    join snapshot_media m on ( s.media_id = m.media_id )
 	    join snapshot_story_link_counts slc on ( s.stories_id = slc.stories_id )
 	    left join (
-	        stories_tags_map stm
+	        snapshot_stories_tags_map stm
                 join tags t on ( stm.tags_id = t.tags_id  and t.tag = 'undateable' )
                 join tag_sets ts on ( t.tag_sets_id = ts.tag_sets_id and ts.name = 'date_invalid' ) )
             on ( stm.stories_id = s.stories_id )
@@ -866,42 +887,6 @@ END
     {
         create_timespan_snapshot( $db, $timespan, 'medium_links' );
     }
-}
-
-sub write_date_counts_csv
-{
-    my ( $db, $cd, $period ) = @_;
-
-    my $csv = MediaWords::Util::CSV::get_query_as_csv( $db, <<END );
-select dc.publish_date, t.tag, t.tags_id, dc.story_count
-    from snapshot_${ period }_date_counts dc, tags t
-    where dc.tags_id = t.tags_id
-    order by t.tag, dc.publish_date
-END
-
-    create_snap_file( $db, $cd, "${ period }_counts.csv", $csv );
-}
-
-sub write_date_counts_snapshot
-{
-    my ( $db, $cd, $period ) = @_;
-
-    die( "unknown period '$period'" ) unless ( grep { $period eq $_ } qw(daily weekly) );
-    my $date_trunc = ( $period eq 'daily' ) ? 'day' : 'week';
-
-    $db->query( <<END, $date_trunc, $date_trunc );
-create temporary table snapshot_${ period }_date_counts $_temporary_tablespace as
-    select date_trunc( ?, s.publish_date ) publish_date, t.tags_id, count(*) story_count
-        from snapshot_stories s, snapshot_stories_tags_map stm, snapshot_tags t
-        where s.stories_id = stm.stories_id and
-            stm.tags_id = t.tags_id
-        group by date_trunc( ?, s.publish_date ), t.tags_id
-END
-
-    create_snap_snapshot( $db, $cd, "${ period }_date_counts" );
-
-    write_date_counts_csv( $db, $cd, $period );
-
 }
 
 sub attach_stories_to_media
@@ -1292,8 +1277,8 @@ END
             label => $medium->{ name },
         };
 
-        $medium->{ view_medium } =
-          "[_mc_base_url_]/admin/tm/medium/$medium->{ media_id }?timespan=$timespan->{ timespans_id }";
+        # FIXME should this be configurable?
+        $medium->{ view_medium } = 'https://sources.mediacloud.org/#/sources/' . $medium->{ media_id };
 
         my $j = 0;
         while ( my ( $name, $type ) = each( %{ $_media_static_gexf_attribute_types } ) )
@@ -1318,7 +1303,6 @@ END
 
     layout_gexf( $gexf );
 
-    # layout_gexf_with_graphviz( $gexf );
     my $xml = XML::Simple::XMLout( $gexf, XMLDecl => 1, RootName => 'gexf' );
 
     return $xml;
@@ -1336,24 +1320,45 @@ sub create_timespan ($$$$$$)
 {
     my ( $db, $cd, $start_date, $end_date, $period, $focus ) = @_;
 
-    my $timespan = {
-        snapshots_id      => $cd->{ snapshots_id },
-        start_date        => $start_date,
-        end_date          => $end_date,
-        period            => $period,
-        story_count       => 0,
-        story_link_count  => 0,
-        medium_count      => 0,
-        medium_link_count => 0,
-        tweet_count       => 0,
-        foci_id           => $focus ? $focus->{ foci_id } : undef
-    };
+    my $snapshots_id = $cd->{ snapshots_id };
+    my $foci_id = $focus ? $focus->{ foci_id } : undef;
 
-    $timespan = $db->create( 'timespans', $timespan );
+    my $focus_clause = $foci_id ? "foci_id = $foci_id" : "foci_id is null";
+
+    my $timespan = $db->query( <<SQL, $snapshots_id, $start_date, $end_date, $period, $foci_id )->hash();
+select *
+    from timespans
+    where
+        snapshots_id = \$1 and
+        start_date = \$2 and
+        end_date = \$3 and
+        period = \$4 and
+        $focus_clause
+SQL
+
+    $timespan ||= $db->query( <<SQL, $snapshots_id, $start_date, $end_date, $period, $foci_id )->hash();
+insert into timespans
+    ( snapshots_id, start_date, end_date, period, foci_id, 
+      story_count, story_link_count, medium_count, medium_link_count, tweet_count )
+    values ( \$1, \$2, \$3, \$4, \$5, 0, 0, 0, 0, 0 )
+    returning *
+SQL
 
     $timespan->{ snapshot } = $cd;
 
     return $timespan;
+}
+
+# return true if there exists at least one row in the relevant table for which timespans_id = $timespans_id
+sub timespan_snapshot_exists($$$)
+{
+    my ( $db, $table, $timespan ) = @_;
+
+    die( "Table name can only have letters and underscores" ) if ( $table =~ /[^a-z_]/i );
+
+    my $exists = $db->query( "select 1 from snap.$table where timespans_id = ?", $timespan->{ timespans_id } )->hash();
+
+    return $exists;
 }
 
 # generate data for the story_links, story_link_counts, media_links, media_link_counts tables
@@ -1361,6 +1366,14 @@ sub create_timespan ($$$$$$)
 sub generate_timespan_data ($$;$)
 {
     my ( $db, $timespan, $is_model ) = @_;
+
+    if ( timespan_snapshot_exists( $db, 'medium_link_counts', $timespan ) )
+    {
+        DEBUG( "timespan already exists.  skipping ..." );
+        return;
+    }
+
+    my $all_models_top_media = MediaWords::TM::Model::get_all_models_top_media( $db, $timespan );
 
     write_period_stories( $db, $timespan );
 
@@ -1371,18 +1384,19 @@ sub generate_timespan_data ($$;$)
     write_medium_links_snapshot( $db, $timespan, $is_model );
     write_medium_link_counts_snapshot( $db, $timespan, $is_model );
 
+    update_timespan_counts( $db, $timespan );
+
+    $all_models_top_media ||= [ MediaWords::TM::Model::get_top_media_link_counts( $db, $timespan ) ];
+
+    MediaWords::TM::Model::print_model_matches( $db, $timespan, $all_models_top_media );
+    MediaWords::TM::Model::update_model_correlation( $db, $timespan, $all_models_top_media );
 }
 
-=head2 update_timespan_counts( $db, $timespan, $live )
-
-Update story_count, story_link_count, medium_count, and medium_link_count fields in the timespan
-hash.  This must be called after setup_temporary_snapshot_tables() to get access to these fields in the timespan hash.
-
-Save to db unless $live is specified.
-
-=cut
-
-sub update_timespan_counts ($$;$)
+# Update story_count, story_link_count, medium_count, and medium_link_count fields in the timespan
+# hash.  This must be called after setup_temporary_snapshot_tables() to get access to these fields in the timespan hash.
+#
+# Save to db unless $live is specified.
+sub update_timespan_counts($$;$)
 {
     my ( $db, $timespan, $live ) = @_;
 
@@ -1416,19 +1430,10 @@ sub generate_timespan ($$$$$$)
 
     DEBUG( "generating $snapshot_label ..." );
 
-    MediaWords::Job::TM::SnapshotTopic->update_job_state_message( $db, "snapshotting $snapshot_label" );
-
-    my $all_models_top_media = MediaWords::TM::Model::get_all_models_top_media( $db, $timespan );
+    update_job_state_message( $db, "snapshotting $snapshot_label" );
 
     DEBUG( "generating snapshot data ..." );
     generate_timespan_data( $db, $timespan );
-
-    update_timespan_counts( $db, $timespan );
-
-    $all_models_top_media ||= [ MediaWords::TM::Model::get_top_media_link_counts( $db, $timespan ) ];
-
-    MediaWords::TM::Model::print_model_matches( $db, $timespan, $all_models_top_media );
-    MediaWords::TM::Model::update_model_correlation( $db, $timespan, $all_models_top_media );
 }
 
 # decrease the given date to the latest monday equal to or before the date
@@ -1568,6 +1573,16 @@ sub create_snapshot
 
     DEBUG( "snapshot $table..." );
 
+    die( "Table name can only have letters and underscores" ) if ( $table =~ /[^a-z_]/i );
+    die( "Key can only have letters and underscores" )        if ( $key =~ /[^a-z_]/i );
+
+    my $snapshot_exists = $db->query( "select 1 from snap.$table where $key = $obj->{ $key }" )->hash();
+    if ( $snapshot_exists )
+    {
+        DEBUG( "snapshot $table already exists.  skipping ..." );
+        return;
+    }
+
     my $column_names = [ $db->query( <<END, $table, $key )->flat ];
 select column_name from information_schema.columns
     where table_name = ? and table_schema = 'snap' and
@@ -1576,7 +1591,6 @@ select column_name from information_schema.columns
 END
 
     die( "Field names can only have letters and underscores" ) if ( grep { /[^a-z_]/i } @{ $column_names } );
-    die( "Table name can only have letters and underscores" ) if ( $table =~ /[^a-z_]/i );
 
     my $column_list = join( ",", @{ $column_names } );
 
@@ -1802,22 +1816,6 @@ END
     return $cd;
 }
 
-# analyze all of the snapshot tables because otherwise immediate queries to the
-# new snapshot ids offer trigger seq scans
-sub analyze_snapshot_tables
-{
-    my ( $db ) = @_;
-
-    DEBUG( "analyzing tables..." );
-
-    my $snapshot_tables = get_snapshot_tables();
-
-    for my $t ( @{ $snapshot_tables } )
-    {
-        $db->query( "analyze snap.$t" );
-    }
-}
-
 # validate and set the periods for the snapshot based on the period parameter
 sub get_periods ($)
 {
@@ -1847,6 +1845,7 @@ SQL
         my $focal_set = $db->query( <<SQL, $fsd->{ focal_set_definitions_id }, $snapshot->{ snapshots_id } )->hash;
 insert into focal_sets ( name, description, focal_technique, snapshots_id )
     select name, description, focal_technique, \$2 from focal_set_definitions where focal_set_definitions_id = \$1
+    on conflict (snapshots_id, name) do update set snapshots_id = \$2
     returning *
 SQL
 
@@ -1859,6 +1858,7 @@ SQL
             my $focus = $db->query( <<SQL, $fd->{ focus_definitions_id }, $focal_set->{ focal_sets_id } )->hash;
 insert into foci ( name, description, arguments, focal_sets_id )
     select name, description, arguments, \$2 from focus_definitions where focus_definitions_id = \$1
+    on conflict ( focal_sets_id, name ) do update set focal_sets_id = \$2
     returning *
 SQL
             map { generate_period_snapshot( $db, $snapshot, $_, $focus ) } @{ $periods };
@@ -1901,13 +1901,15 @@ filter for bots (a bot is defined as any user tweeting more than 200 post per da
 The periods should be a list of periods to include in the snapshot, where the allowed periods are custom,
 overall, weekly, and monthly.  If periods is not specificied or is empty, all periods will be generated.
 
-Returns snapshot ID of a newly generated snapshot.
+If a snapshots_id is provided, use the existing snapshot.  Otherwise, create a new one.
+
+Returns snapshots_id of the provided or newly created snapshot.
 
 =cut
 
-sub snapshot_topic ($$;$$$)
+sub snapshot_topic ($$;$$$$)
 {
-    my ( $db, $topics_id, $note, $bot_policy, $periods ) = @_;
+    my ( $db, $topics_id, $snapshots_id, $note, $bot_policy, $periods ) = @_;
 
     my $allowed_periods = [ qw(custom overall weekly monthly) ];
 
@@ -1929,10 +1931,13 @@ sub snapshot_topic ($$;$$$)
 
     my ( $start_date, $end_date ) = ( $topic->{ start_date }, $topic->{ end_date } );
 
-    my $snap = create_snapshot_row( $db, $topic, $start_date, $end_date, $note, $bot_policy );
+    my $snap =
+        $snapshots_id
+      ? $db->require_by_id( 'snapshots', $snapshots_id )
+      : create_snapshot_row( $db, $topic, $start_date, $end_date, $note, $bot_policy );
 
-    MediaWords::Job::TM::SnapshotTopic->update_job_state_args( $db, { snapshots_id => $snap->{ snapshots_id } } );
-    MediaWords::Job::TM::SnapshotTopic->update_job_state_message( $db, "snapshotting data" );
+    update_job_state_args( $db, { snapshots_id => $snap->{ snapshots_id } } );
+    update_job_state_message( $db, "snapshotting data" );
 
     write_temporary_snapshot_tables( $db, $topic, $snap );
 
@@ -1943,19 +1948,15 @@ sub snapshot_topic ($$;$$$)
 
     generate_period_focus_snapshots( $db, $snap, $periods );
 
-    MediaWords::Job::TM::SnapshotTopic->update_job_state_message( $db, "finalizing snapshot" );
-
-    write_date_counts_snapshot( $db, $snap, 'daily' );
-    write_date_counts_snapshot( $db, $snap, 'weekly' );
+    update_job_state_message( $db, "finalizing snapshot" );
 
     _export_stories_to_solr( $db, $snap );
-
-    analyze_snapshot_tables( $db );
 
     discard_temp_tables( $db );
 
     # update this manually because snapshot_topic might be called directly from Mine::mine_topic()
     $db->update_by_id( 'snapshots', $snap->{ snapshots_id }, { state => $MediaWords::AbstractJob::STATE_COMPLETED } );
+    MediaWords::TM::send_topic_alert( $db, $topic, "new topic snapshot is ready" );
 
     return $snap->{ snapshots_id };
 }

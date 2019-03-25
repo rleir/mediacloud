@@ -113,6 +113,7 @@ my $_url_permission_types = {
     '/api/v2/topics/reset'                        => 'topics_admin',
     '/api/v2/topics/sentences/count'              => 'topics_read',
     '/api/v2/topics/single'                       => 'public',
+    '/api/v2/topics/snapshots/create'             => 'topics_write',
     '/api/v2/topics/snapshots/generate'           => 'topics_write',
     '/api/v2/topics/snapshots/generate_status'    => 'topics_read',
     '/api/v2/topics/snapshots/list'               => 'topics_read',
@@ -128,6 +129,11 @@ my $_url_permission_types = {
     '/api/v2/topics/wc/list'                      => 'topics_read',
     '/api/v2/util/is_syndicated_ap'               => 'public',
     '/api/v2/wc/list'                             => 'public',
+    '/api/v2/users/delete'                        => 'admin',
+    '/api/v2/users/list'                          => 'admin',
+    '/api/v2/users/list_roles'                    => 'admin',
+    '/api/v2/users/single'                        => 'admin',
+    '/api/v2/users/update'                        => 'admin',
 };
 
 # list of transformations needed to insert ids at proper places to make valid urls.  possible transformations:
@@ -152,6 +158,7 @@ my $_url_transformations = {
     '/api/v2/topics/permissions/user_list'        => '/api/v2/topics/permissions/user/list',
     '/api/v2/topics/reset'                        => '/api/v2/topics/~topics_id~/reset',
     '/api/v2/topics/sentences/count'              => '/api/v2/topics/~topics_id~/sentences/count',
+    '/api/v2/topics/snapshots/create'             => '/api/v2/topics/~topics_id~/snapshots/create',
     '/api/v2/topics/snapshots/generate'           => '/api/v2/topics/~topics_id~/snapshots/generate',
     '/api/v2/topics/snapshots/generate_status'    => '/api/v2/topics/~topics_id~/snapshots/generate_status',
     '/api/v2/topics/snapshots/list'               => '/api/v2/topics/~topics_id~/snapshots/list',

@@ -8,7 +8,6 @@ use base 'Catalyst::Controller';
 use List::Util qw(first max maxstr min minstr reduce shuffle sum);
 use Moose;
 use namespace::autoclean;
-use List::Compare;
 use Readonly;
 
 use MediaWords::DBI::ApiLinks;
@@ -58,14 +57,14 @@ sub links_GET
 
     my $timespan = MediaWords::TM::set_timespans_id_param( $c );
 
-    MediaWords::DBI::ApiLinks::process_and_stash_link( $c );
-
     my $db = $c->dbis;
 
-    my $limit = $c->req->params->{ limit } || 1_000;
-    $limit = List::Util::min( $limit, 1_000_000 );
+    $c->req->params->{ limit } = List::Util::min( int( $c->req->params->{ limit } // 1_000 ), 1_000_000 );
+    my $limit = $c->req->params->{ limit };
 
-    my $offset = $c->req->params->{ offset } || 0;
+    MediaWords::DBI::ApiLinks::process_and_stash_link( $c );
+
+    my $offset = int( $c->req->params->{ offset } // 0 );
 
     my $timespans_id = $timespan->{ timespans_id };
     my $snapshots_id = $timespan->{ snapshots_id };
@@ -93,14 +92,16 @@ sub _get_extra_where_clause($$)
 {
     my ( $c, $timespans_id ) = @_;
 
+    $timespans_id = int( $timespans_id );
+
     my $clauses = [];
 
-    if ( my $media_id = $c->req->params->{ media_id } )
+    if ( my $media_id = int( $c->req->params->{ media_id } // 0 ) )
     {
         my $media_ids = ref( $media_id ) ? $media_id : [ $media_id ];
-        my $media_ids_list = join( ',', map { $_ += 0 } @{ $media_ids } );
+        my $media_ids_list = join( ',', map { int( $_ ) } @{ $media_ids } );
         push( @{ $clauses }, <<SQL );
-slc.stories_id in (
+exists (
     select s.stories_id
         from snap.stories s
             join timespans t using ( snapshots_id )
@@ -112,17 +113,15 @@ slc.stories_id in (
 SQL
     }
 
-    if ( my $stories_id = $c->req->params->{ stories_id } )
+    if ( my $stories_id = int( $c->req->params->{ stories_id } // 0 ) )
     {
         my $stories_ids = ref( $stories_id ) ? $stories_id : [ $stories_id ];
-        my $stories_ids_list = join( ',', map { $_ += 0 } @{ $stories_ids } );
+        my $stories_ids_list = join( ',', map { int( $_ ) } @{ $stories_ids } ) || '-1';
         push( @{ $clauses }, "slc.stories_id in ( $stories_ids_list )" );
     }
 
-    if ( my $link_to_stories_id = $c->req->params->{ link_to_stories_id } )
+    if ( my $link_to_stories_id = int( $c->req->params->{ link_to_stories_id } // 0 ) )
     {
-        $link_to_stories_id += 0;
-        $timespans_id       += 0;
         push( @{ $clauses }, <<SQL );
 slc.stories_id in (
     select
@@ -136,10 +135,8 @@ SQL
 
     }
 
-    if ( my $link_from_stories_id = $c->req->params->{ link_from_stories_id } )
+    if ( my $link_from_stories_id = int( $c->req->params->{ link_from_stories_id } // 0 ) )
     {
-        $link_from_stories_id += 0;
-        $timespans_id         += 0;
         push( @{ $clauses }, <<SQL );
 slc.stories_id in (
     select
@@ -153,10 +150,8 @@ SQL
 
     }
 
-    if ( my $link_to_media_id = $c->req->params->{ link_to_media_id } )
+    if ( my $link_to_media_id = int( $c->req->params->{ link_to_media_id } // 0 ) )
     {
-        $link_to_media_id += 0;
-        $timespans_id     += 0;
         push( @{ $clauses }, <<SQL );
 slc.stories_id in (
     select
@@ -172,10 +167,8 @@ SQL
 
     }
 
-    if ( my $link_from_media_id = $c->req->params->{ link_from_media_id } )
+    if ( my $link_from_media_id = int( $c->req->params->{ link_from_media_id } // 0 ) )
     {
-        $link_from_media_id += 0;
-        $timespans_id       += 0;
         push( @{ $clauses }, <<SQL );
 slc.stories_id in (
     select
@@ -213,7 +206,8 @@ sub _add_foci_to_stories($$$)
 {
     my ( $db, $timespan, $stories ) = @_;
 
-    my $ids_table = $db->get_temporary_ids_table( [ map { $_->{ stories_id } } @{ $stories } ] );
+    # enumerate the stories ids to get a decent query plan
+    my $stories_ids_list = join( ',', map { $_->{ stories_id } } @{ $stories } ) || '-1';
 
     my $foci = $db->query( <<SQL, $timespan->{ timespans_id } )->hashes;
 select
@@ -234,7 +228,7 @@ select
             ( slcb.stories_id = slc.stories_id and
                 slcb.timespans_id = b.timespans_id )
     where
-        slc.stories_id in ( select id from $ids_table ) and
+        slc.stories_id in ( $stories_ids_list ) and
         a.timespans_id = \$1
 SQL
 
@@ -253,18 +247,17 @@ sub _get_sort_clause
     $sort_param ||= 'inlink';
 
     my $sort_field_lookup = {
-        inlink       => 'slc.media_inlink_count',
-        inlink_count => 'slc.media_inlink_count',
-        facebook     => 'slc.facebook_share_count',
-        twitter      => 'slc.simple_tweet_count',
+        inlink       => 'slc.media_inlink_count desc',
+        inlink_count => 'slc.media_inlink_count desc',
+        facebook     => 'slc.facebook_share_count desc nulls last',
+        twitter      => 'slc.simple_tweet_count desc',
         random       => 'random()'
     };
 
     my $sort_field = $sort_field_lookup->{ lc( $sort_param ) }
       || die( "unknown sort value: '$sort_param'" );
 
-    # md5 hashing is to make tie breaks random but consistent
-    return "$sort_field desc nulls last";
+    return $sort_field;
 }
 
 sub list_GET
@@ -277,21 +270,18 @@ sub list_GET
 
     my $db = $c->dbis;
 
-    $c->req->params->{ sort }  ||= 'inlink';
-    $c->req->params->{ limit } ||= 20;
+    $c->req->params->{ sort } ||= 'inlink';
 
     my $sort_clause = _get_sort_clause( $c->req->params->{ sort } );
-    $sort_clause = "order by slc.timespans_id, $sort_clause, md5( slc.stories_id::text )";
+    $sort_clause = "order by slc.timespans_id desc, $sort_clause, md5( slc.stories_id::text ) desc";
 
     my $timespans_id = $timespan->{ timespans_id };
     my $snapshots_id = $timespan->{ snapshots_id };
 
     my $extra_clause = _get_extra_where_clause( $c, $timespans_id );
 
-    my $limit = $c->req->params->{ limit };
-    $limit = List::Util::min( $limit, 1_000 );
-
-    my $offset = $c->req->params->{ offset } || 0;
+    my $offset = int( $c->req->params->{ offset } // 0 );
+    my $limit = int( $c->req->params->{ limit } );
 
     my $pre_limit_order = $extra_clause ? '' : "$sort_clause limit $limit offset $offset";
 
@@ -303,7 +293,7 @@ create temporary table _topics_stories_slc as
         $pre_limit_order
 SQL
 
-    my $stories = $db->query( <<SQL, $snapshots_id, $limit, $offset )->hashes;
+    my $stories = $db->query( <<SQL, $snapshots_id )->hashes;
 select s.*, slc.*, m.name media_name
     from _topics_stories_slc slc
         join snap.stories s on slc.stories_id = s.stories_id        
@@ -343,16 +333,16 @@ sub facebook_GET
 
     my $timespan = MediaWords::TM::set_timespans_id_param( $c );
 
-    MediaWords::DBI::ApiLinks::process_and_stash_link( $c );
-
     my $db = $c->dbis;
 
-    $c->req->params->{ limit } ||= 1000;
+    $c->req->params->{ limit } = int( $c->req->params->{ limit } // 1000 );
+
+    MediaWords::DBI::ApiLinks::process_and_stash_link( $c );
 
     my $timespans_id = $timespan->{ timespans_id };
 
-    my $limit  = $c->req->params->{ limit };
-    my $offset = $c->req->params->{ offset };
+    my $limit  = int( $c->req->params->{ limit }  // 0 );
+    my $offset = int( $c->req->params->{ offset } // 0 );
 
     my $counts = $db->query( <<SQL, $timespans_id, $limit, $offset )->hashes;
 select
@@ -388,8 +378,8 @@ sub count_GET
     my $timespan = MediaWords::TM::require_timespan_for_topic(
         $c->dbis,
         $c->stash->{ topics_id },
-        $c->req->params->{ timespans_id },
-        $c->req->params->{ snapshots_id }
+        int( $c->req->params->{ timespans_id } // 0 ),
+        int( $c->req->params->{ snapshots_id } // 0 )
     );
 
     my $q = $c->req->params->{ q };

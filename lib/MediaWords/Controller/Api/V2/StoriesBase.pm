@@ -10,7 +10,6 @@ use Encode;
 use List::Util qw(first max maxstr min minstr reduce shuffle sum);
 use Moose;
 use namespace::autoclean;
-use List::Compare;
 
 use MediaWords::DBI::Stories;
 use MediaWords::Solr;
@@ -64,18 +63,16 @@ sub _add_raw_1st_download
 {
     my ( $db, $stories ) = @_;
 
-    $db->begin;
     my $ids_table = $db->get_temporary_ids_table( [ map { int( $_->{ stories_id } ) } @{ $stories } ] );
 
     my $downloads = $db->query(
-        <<SQL
-        SELECT d.*
-        FROM downloads AS d
-        JOIN (
-            SELECT MIN(s.downloads_id) OVER (PARTITION BY s.stories_id ) AS downloads_id
-            FROM downloads AS s
-            WHERE s.stories_id IN (SELECT id FROM $ids_table)
-        ) AS q ON d.downloads_id = q.downloads_id
+        <<"SQL"
+        SELECT DISTINCT ON(stories_id) *
+        FROM downloads
+        WHERE stories_id IN (
+            SELECT id FROM $ids_table
+        )
+        ORDER BY stories_id, downloads_id
 SQL
     )->hashes;
 
@@ -89,15 +86,13 @@ SQL
 
         $story->{ raw_first_download_file } = defined( $content ) ? $content : { missing => 'true' };
     }
-
-    $db->commit;
 }
 
 sub add_extra_data
 {
     my ( $self, $c, $stories ) = @_;
 
-    my $raw_1st_download = $c->req->params->{ raw_1st_download };
+    my $raw_1st_download = int( $c->req->params->{ raw_1st_download } // 0 );
 
     return $stories unless ( scalar @{ $stories } && ( $raw_1st_download ) );
 
@@ -197,25 +192,49 @@ sub _add_nested_data
 
     my $ids_table = $db->get_temporary_ids_table( [ map { int( $_->{ stories_id } ) } @{ $stories } ] );
 
-    if ( $self->{ show_text } )
+    if ( int( $self->{ show_text } // 0 ) )
     {
 
         my $story_text_data = $db->query(
             <<SQL
+
+            -- "download_texts" INT -> BIGINT join hack: pre-select rows from
+            -- "download_texts" using a constant array, and then inter-join
+            -- them with the main query
+
+            WITH stories_download_texts AS (
+                SELECT *
+                FROM download_texts
+                WHERE downloads_id = ANY(
+                    ARRAY(
+                        SELECT downloads_id
+                        FROM downloads
+                        WHERE stories_id IN (
+                            SELECT id
+                            FROM $ids_table
+                        )
+                    )
+                )
+            )
+
             SELECT
                 s.stories_id,
                 s.full_text_rss,
                 CASE
                     WHEN BOOL_AND(s.full_text_rss) THEN s.title || E'.\n\n' || s.description
-                    ELSE string_agg(dt.download_text, E'.\n\n'::text)
+                    ELSE string_agg(sdt.download_text, E'.\n\n'::text)
                 END AS story_text
             FROM stories AS s
                 JOIN downloads AS d
                     ON s.stories_id = d.stories_id
-                LEFT JOIN download_texts AS dt
-                    ON d.downloads_id = dt.downloads_id
-            WHERE s.stories_id IN (SELECT id FROM $ids_table)
+                LEFT JOIN stories_download_texts AS sdt
+                    ON d.downloads_id = sdt.downloads_id
+            WHERE s.stories_id IN (
+                SELECT id
+                FROM $ids_table
+            )
             GROUP BY s.stories_id
+
 SQL
         )->hashes;
 
@@ -246,7 +265,7 @@ SQL
         $stories = MediaWords::DBI::Stories::attach_story_data_to_stories( $stories, $extracted_data );
     }
 
-    if ( $self->{ show_sentences } )
+    if ( int( $self->{ show_sentences } // 0 ) )
     {
         my $sentences;
         $db->run_block_with_large_work_mem(
@@ -266,7 +285,7 @@ SQL
 
     }
 
-    if ( $self->{ show_ap_stories_id } )
+    if ( int( $self->{ show_ap_stories_id } // 0 ) )
     {
         my $ap_stories_ids = _get_ap_stories_ids( $db, $ids_table );
 
@@ -294,7 +313,7 @@ SQL
 
     $stories = MediaWords::DBI::Stories::attach_story_data_to_stories( $stories, $tag_data, 'story_tags' );
 
-    if ( $self->{ show_feeds } )
+    if ( int( $self->{ show_feeds } // 0 ) )
     {
         my $feed_data = $db->query(
             <<SQL
@@ -315,7 +334,7 @@ SQL
         $stories = MediaWords::DBI::Stories::attach_story_data_to_stories( $stories, $feed_data, 'feeds' );
     }
 
-    $stories = _attach_word_counts_to_stories( $db, $stories ) if ( $self->{ show_wc } );
+    $stories = _attach_word_counts_to_stories( $db, $stories ) if ( int( $self->{ show_wc } // 0 ) );
 
     return $stories;
 }
@@ -333,7 +352,7 @@ sub _get_object_ids
 
     my $db = $c->dbis;
 
-    if ( my $feeds_id = $c->req->params->{ feeds_id } )
+    if ( my $feeds_id = int( $c->req->params->{ feeds_id } // 0 ) )
     {
         die( "cannot specify both 'feeds_id' and either 'q' or 'fq'" )
           if ( $c->req->params->{ q } || $c->req->params->{ fq } );
@@ -344,8 +363,10 @@ sub _get_object_ids
             FROM processed_stories
                 JOIN feeds_stories_map USING (stories_id)
             WHERE feeds_id = ?
+            ORDER BY stories_id desc
+            limit ?
 SQL
-            $feeds_id
+            $feeds_id, $rows
         )->flat;
 
         return $stories_ids;
@@ -365,16 +386,16 @@ sub _fetch_list($$$$$$)
 {
     my ( $self, $c, $last_id, $table_name, $id_field, $rows ) = @_;
 
-    $self->{ show_sentences }     = $c->req->params->{ sentences };
-    $self->{ show_text }          = $c->req->params->{ text };
-    $self->{ show_ap_stories_id } = $c->req->params->{ ap_stories_id };
-    $self->{ show_wc }            = $c->req->params->{ wc };
-    $self->{ show_feeds }         = $c->req->params->{ show_feeds };
+    $self->{ show_sentences }     = int( $c->req->params->{ sentences }     // 0 );
+    $self->{ show_text }          = int( $c->req->params->{ text }          // 0 );
+    $self->{ show_ap_stories_id } = int( $c->req->params->{ ap_stories_id } // 0 );
+    $self->{ show_wc }            = int( $c->req->params->{ wc }            // 0 );
+    $self->{ show_feeds }         = int( $c->req->params->{ show_feeds }    // 0 );
 
     $rows //= 20;
     $rows = List::Util::min( $rows, 1_000 );
 
-    my $ps_ids = $self->_get_object_ids( $c, $last_id, $rows );
+    my $ps_ids = $self->_get_object_ids( $c, $last_id + 0, $rows );
 
     return [] unless ( scalar @{ $ps_ids } );
 
@@ -388,6 +409,8 @@ sub _fetch_list($$$$$$)
 
     my $ids_table = $db->get_temporary_ids_table( $ps_ids, 1 );
 
+    my $order_clause = $c->req->params->{ feeds_id } ? 'stories_id desc' : 'order_pkey asc';
+
     my $stories = $db->query(
         <<"SQL",
         WITH ps_ids AS (
@@ -399,6 +422,8 @@ sub _fetch_list($$$$$$)
             FROM $ids_table
                 INNER JOIN processed_stories
                     ON $ids_table.id = processed_stories.processed_stories_id
+            ORDER BY $order_clause
+            LIMIT ?
         )
 
         SELECT
@@ -415,8 +440,7 @@ sub _fetch_list($$$$$$)
             LEFT JOIN stories_ap_syndicated ap
                 ON stories.stories_id = ap.stories_id
 
-        ORDER BY ps_ids.order_pkey
-        LIMIT ?
+        ORDER BY $order_clause
 SQL
         $rows
     )->hashes;
@@ -521,7 +545,7 @@ sub word_matrix_GET
 
     my $q    = $c->req->params->{ q };
     my $fq   = $c->req->params->{ fq };
-    my $rows = $c->req->params->{ rows } || 1000;
+    my $rows = int( $c->req->params->{ rows } // 1000 );
 
     die( "must specify either 'q' or 'fq' param" ) unless ( $q || $fq );
 
